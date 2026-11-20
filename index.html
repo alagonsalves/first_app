@@ -3,8 +3,690 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Single-file Web App</title>
+    <title>Beam Designer</title>
+    <style>
+      :root {
+        --accent: #2563eb;
+        --accent-dark: #1d4ed8;
+        --ink: #172033;
+        --muted: #667085;
+        --line: #e2e8f0;
+        --panel: #ffffff;
+        --canvas: #f6f8fb;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        min-width: 320px;
+        background: var(--canvas);
+        color: var(--ink);
+        font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      .app-header {
+        height: 68px;
+        display: flex;
+        align-items: center;
+        padding: 0 28px;
+        background: var(--panel);
+        border-bottom: 1px solid var(--line);
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 18px;
+        font-weight: 750;
+      }
+
+      .brand-mark {
+        width: 34px;
+        height: 34px;
+        display: grid;
+        place-items: center;
+        border-radius: 8px;
+        background: var(--accent);
+        color: white;
+        font-size: 15px;
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: 330px minmax(0, 1fr);
+        gap: 20px;
+        max-width: 1500px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+
+      .input-panel,
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        box-shadow: 0 6px 18px rgba(23, 32, 51, 0.055);
+      }
+
+      .input-panel {
+        align-self: start;
+        max-height: calc(100vh - 108px);
+        overflow-y: auto;
+      }
+
+      .panel-section {
+        padding: 17px 18px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .panel-section:last-child { border-bottom: 0; }
+
+      .section-title {
+        margin: 0 0 12px;
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .field { margin-bottom: 12px; }
+      .field:last-child { margin-bottom: 0; }
+
+      label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 13px;
+        font-weight: 650;
+      }
+
+      .unit { color: var(--muted); font-weight: 500; }
+
+      input, select {
+        width: 100%;
+        height: 38px;
+        border: 1px solid #cbd5e1;
+        border-radius: 7px;
+        background: white;
+        color: var(--ink);
+        padding: 0 10px;
+        font: inherit;
+        font-size: 14px;
+        outline: none;
+      }
+
+      input:focus, select:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+      }
+
+      .segmented {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+        padding: 4px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: #f8fafc;
+      }
+
+      .segmented label {
+        margin: 0;
+        height: 36px;
+        display: grid;
+        place-items: center;
+        border-radius: 6px;
+        cursor: pointer;
+        color: var(--muted);
+      }
+
+      .segmented input {
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .segmented input:checked + span {
+        width: 100%;
+        height: 100%;
+        display: grid;
+        place-items: center;
+        border-radius: 6px;
+        background: white;
+        color: var(--accent);
+        box-shadow: 0 1px 4px rgba(23, 32, 51, 0.12);
+      }
+
+      .span-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 84px;
+        align-items: center;
+        gap: 10px;
+      }
+
+      input[type="range"] {
+        height: 20px;
+        padding: 0;
+        border: 0;
+        accent-color: var(--accent);
+      }
+
+      .load-heading,
+      .load-actions,
+      .load-row,
+      .load-grid {
+        display: flex;
+        align-items: center;
+      }
+
+      .load-heading {
+        justify-content: space-between;
+        margin-bottom: 8px;
+      }
+
+      .load-count { color: var(--muted); font-size: 12px; }
+
+      .load-list {
+        display: grid;
+        gap: 8px;
+      }
+
+      .load-card {
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fbfcfe;
+      }
+
+      .load-row {
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 8px;
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .load-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .load-grid.uniform { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .load-grid label { margin-bottom: 4px; font-size: 11px; }
+      .load-grid input { height: 34px; }
+
+      .icon-button {
+        width: 30px;
+        height: 30px;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--muted);
+        cursor: pointer;
+        font-size: 18px;
+      }
+
+      .icon-button:hover { background: #fee2e2; color: #b91c1c; }
+
+      .load-actions {
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .button {
+        min-height: 36px;
+        border: 1px solid #cbd5e1;
+        border-radius: 7px;
+        background: white;
+        color: var(--ink);
+        padding: 7px 10px;
+        font: inherit;
+        font-size: 12px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .button.primary {
+        border-color: var(--accent);
+        background: var(--accent);
+        color: white;
+      }
+
+      .button.primary:hover { background: var(--accent-dark); }
+
+      .results { display: grid; gap: 16px; min-width: 0; }
+
+      .drawing-card { padding: 16px; }
+
+      .analysis-stack {
+        display: grid;
+        gap: 12px;
+      }
+
+      .analysis-stack .drawing-card,
+      .analysis-stack .diagram-card {
+        --plot-inset: 32px;
+      }
+
+      .card-heading {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        margin-bottom: 10px;
+      }
+
+      .card-heading h2 {
+        margin: 0;
+        font-size: 14px;
+      }
+
+      .card-heading span { color: var(--muted); font-size: 12px; }
+
+      .beam-placeholder {
+        min-height: 170px;
+        display: grid;
+        place-items: center;
+        margin-inline: var(--plot-inset, 32px);
+        border: 1px dashed #cbd5e1;
+        border-radius: 9px;
+        background:
+          linear-gradient(rgba(37,99,235,0.035) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(37,99,235,0.035) 1px, transparent 1px);
+        background-size: 24px 24px;
+        color: var(--muted);
+        text-align: center;
+        font-size: 13px;
+      }
+
+      .diagram-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+
+      .diagram-card {
+        height: 170px;
+        padding: 16px;
+      }
+
+      .diagram-placeholder {
+        height: 118px;
+        display: grid;
+        place-items: center;
+        margin-inline: var(--plot-inset, 32px);
+        border: 1px dashed #cbd5e1;
+        border-radius: 8px;
+        color: var(--muted);
+        font-size: 12px;
+        text-align: center;
+      }
+
+      .checks {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+
+      .check-card {
+        min-height: 145px;
+        padding: 16px;
+      }
+
+      .check-card:hover { border-color: #94a3b8; }
+
+      .check-label {
+        display: flex;
+        justify-content: space-between;
+        font-size: 13px;
+        font-weight: 750;
+      }
+
+      .status {
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .check-value {
+        margin: 18px 0 12px;
+        font-size: 22px;
+        font-weight: 750;
+      }
+
+      .check-value small {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 500;
+      }
+
+      .bar {
+        height: 8px;
+        overflow: hidden;
+        border-radius: 99px;
+        background: #e8edf4;
+      }
+
+      .bar-fill {
+        width: 70%;
+        height: 100%;
+        border-radius: inherit;
+        background: #22c55e;
+      }
+
+      .recommendation {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 14px 16px;
+      }
+
+      .recommendation p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      @media (max-width: 980px) {
+        .layout { grid-template-columns: 285px minmax(0, 1fr); }
+        .diagram-grid { grid-template-columns: 1fr; }
+      }
+
+      @media (max-width: 760px) {
+        .layout { grid-template-columns: 1fr; }
+        .input-panel { max-height: none; }
+        .checks { grid-template-columns: 1fr; }
+      }
+    </style>
   </head>
   <body>
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-mark">BD</div>
+        <span>Beam Designer</span>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside class="input-panel" aria-label="Beam inputs">
+        <section class="panel-section">
+          <h2 class="section-title">Beam Setup</h2>
+          <div class="field">
+            <label>Support type</label>
+            <div class="segmented">
+              <label>
+                <input type="radio" name="support" value="simply-supported" checked>
+                <span>Simply supported</span>
+              </label>
+              <label>
+                <input type="radio" name="support" value="cantilever">
+                <span>Cantilever</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="span-number">Span <span class="unit">(ft)</span></label>
+            <div class="span-row">
+              <input id="span-slider" type="range" min="4" max="40" step="0.25" value="20" aria-label="Span in feet">
+              <input id="span-number" type="number" min="4" max="40" step="0.25" value="20" aria-label="Numeric span in feet">
+            </div>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <div class="load-heading">
+            <h2 class="section-title" style="margin:0">Loads</h2>
+            <span class="load-count" id="load-count">1 uniform load</span>
+          </div>
+          <div class="load-list" id="point-load-list"></div>
+          <div class="load-list" id="uniform-load-list"></div>
+          <div class="load-actions">
+            <button class="button" id="add-point" type="button">+ Add point load</button>
+            <button class="button" id="add-uniform" type="button">+ Add uniform load</button>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <h2 class="section-title">Section</h2>
+          <div class="field">
+            <label for="material">Material</label>
+            <select id="material">
+              <option value="steel" selected>Steel</option>
+              <option value="lumber">Douglas Fir-Larch No. 2 Lumber</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="section">Section</label>
+            <select id="section"></select>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <div class="field">
+            <label for="deflection-limit">Deflection limit</label>
+            <select id="deflection-limit">
+              <option value="240">L/240</option>
+              <option value="360" selected>L/360</option>
+            </select>
+          </div>
+        </section>
+      </aside>
+
+      <section class="results" aria-label="Beam results">
+        <div class="analysis-stack">
+          <div class="card drawing-card">
+            <div class="card-heading">
+              <h2>Beam</h2>
+              <span>Loading diagram</span>
+            </div>
+            <div class="beam-placeholder" id="beam-placeholder">
+              Beam drawing placeholder
+            </div>
+          </div>
+
+          <div class="diagram-grid">
+            <div class="card diagram-card">
+              <div class="card-heading"><h2>Shear</h2><span>kips</span></div>
+              <div class="diagram-placeholder">Shear diagram placeholder</div>
+            </div>
+            <div class="card diagram-card">
+              <div class="card-heading"><h2>Moment</h2><span>kip-ft</span></div>
+              <div class="diagram-placeholder">Moment diagram placeholder</div>
+            </div>
+            <div class="card diagram-card">
+              <div class="card-heading"><h2>Deflection</h2><span>in</span></div>
+              <div class="diagram-placeholder">Deflection diagram placeholder</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="checks">
+          <div class="card check-card" title="Bending check: fb = |M|max × 12 / Sx, compared with the allowable bending stress.">
+            <div class="check-label">
+              <span>Bending</span>
+              <span class="status">NOT CALCULATED</span>
+            </div>
+            <div class="check-value">— <small>ksi actual</small></div>
+            <div class="bar"><div class="bar-fill" style="width:0;background:#cbd5e1"></div></div>
+          </div>
+          <div class="card check-card" title="Deflection check: |y|max compared with L/240 or L/360, using L in inches.">
+            <div class="check-label">
+              <span>Deflection</span>
+              <span class="status">NOT CALCULATED</span>
+            </div>
+            <div class="check-value">— <small>in actual</small></div>
+            <div class="bar"><div class="bar-fill" style="width:0;background:#cbd5e1"></div></div>
+          </div>
+        </div>
+
+        <div class="card recommendation">
+          <p>Lightest passing section will appear after calculations are implemented.</p>
+          <button class="button primary" type="button" disabled>Use lightest passing</button>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const steelSections = ["W8x10", "W10x12", "W12x26", "W14x22", "W16x26", "W18x35", "W21x44", "W24x55"];
+      const lumberSections = ["2x8", "2x10", "2x12"];
+
+      const spanSlider = document.getElementById("span-slider");
+      const spanNumber = document.getElementById("span-number");
+      const materialSelect = document.getElementById("material");
+      const sectionSelect = document.getElementById("section");
+      const pointList = document.getElementById("point-load-list");
+      const uniformList = document.getElementById("uniform-load-list");
+      const loadCount = document.getElementById("load-count");
+
+      function clamp(value, min, max) {
+        return Math.min(max, Math.max(min, value));
+      }
+
+      function syncSpan(source, value) {
+        let span = clamp(Number(value) || 4, 4, 40);
+        span = Math.round(span * 4) / 4;
+        spanSlider.value = span;
+        spanNumber.value = span;
+      }
+
+      spanSlider.addEventListener("input", () => syncSpan(spanSlider, spanSlider.value));
+      spanNumber.addEventListener("input", () => syncSpan(spanNumber, spanNumber.value));
+      spanNumber.addEventListener("change", () => syncSpan(spanNumber, spanNumber.value));
+
+      function updateSections() {
+        const sections = materialSelect.value === "steel" ? steelSections : lumberSections;
+        sectionSelect.replaceChildren();
+        sections.forEach((name) => {
+          const option = document.createElement("option");
+          option.value = name;
+          option.textContent = name;
+          sectionSelect.appendChild(option);
+        });
+        sectionSelect.value = materialSelect.value === "steel" ? "W12x26" : "2x8";
+      }
+
+      materialSelect.addEventListener("change", updateSections);
+      updateSections();
+
+      function positiveInput(input, fallback = 0) {
+        input.addEventListener("input", () => {
+          const value = Number(input.value);
+          if (input.value !== "" && value < 0) input.value = fallback;
+        });
+      }
+
+      function updateLoadCount() {
+        const pointCount = pointList.querySelectorAll(".load-card").length;
+        const uniformCount = uniformList.querySelectorAll(".load-card").length;
+        const parts = [];
+        if (pointCount) parts.push(`${pointCount} point ${pointCount === 1 ? "load" : "loads"}`);
+        if (uniformCount) parts.push(`${uniformCount} uniform ${uniformCount === 1 ? "load" : "loads"}`);
+        loadCount.textContent = parts.length ? parts.join(", ") : "No loads";
+      }
+
+      function removeLoad(button) {
+        button.closest(".load-card").remove();
+        updateLoadCount();
+      }
+
+      function addPointLoad(magnitude = 10, position = 10) {
+        const card = document.createElement("div");
+        card.className = "load-card";
+        card.innerHTML = `
+          <div class="load-row">
+            <span>Point load</span>
+            <button class="icon-button" type="button" title="Remove point load" aria-label="Remove point load">×</button>
+          </div>
+          <div class="load-grid">
+            <div>
+              <label>Magnitude <span class="unit">(kips)</span></label>
+              <input class="point-magnitude" type="number" min="0" step="0.1" value="${magnitude}">
+            </div>
+            <div>
+              <label>Position <span class="unit">(ft)</span></label>
+              <input class="point-position" type="number" min="0" max="${spanNumber.value}" step="0.25" value="${position}">
+            </div>
+          </div>`;
+        pointList.appendChild(card);
+        const magnitudeInput = card.querySelector(".point-magnitude");
+        const positionInput = card.querySelector(".point-position");
+        positiveInput(magnitudeInput);
+        positionInput.addEventListener("input", () => {
+          positionInput.value = clamp(Number(positionInput.value) || 0, 0, Number(spanNumber.value));
+        });
+        card.querySelector(".icon-button").addEventListener("click", (event) => removeLoad(event.currentTarget));
+        updateLoadCount();
+      }
+
+      function addUniformLoad(magnitude = 1, start = 0, end = 20) {
+        const card = document.createElement("div");
+        card.className = "load-card";
+        card.innerHTML = `
+          <div class="load-row">
+            <span>Uniform load</span>
+            <button class="icon-button" type="button" title="Remove uniform load" aria-label="Remove uniform load">×</button>
+          </div>
+          <div class="load-grid uniform">
+            <div>
+              <label>Magnitude <span class="unit">(kips/ft)</span></label>
+              <input class="uniform-magnitude" type="number" min="0" step="0.01" value="${magnitude}">
+            </div>
+            <div>
+              <label>Start <span class="unit">(ft)</span></label>
+              <input class="uniform-start" type="number" min="0" max="${spanNumber.value}" step="0.25" value="${start}">
+            </div>
+            <div>
+              <label>End <span class="unit">(ft)</span></label>
+              <input class="uniform-end" type="number" min="0" max="${spanNumber.value}" step="0.25" value="${end}">
+            </div>
+          </div>`;
+        uniformList.appendChild(card);
+        const magnitudeInput = card.querySelector(".uniform-magnitude");
+        const startInput = card.querySelector(".uniform-start");
+        const endInput = card.querySelector(".uniform-end");
+        positiveInput(magnitudeInput);
+
+        function normalizeEndpoints() {
+          let start = clamp(Number(startInput.value) || 0, 0, Number(spanNumber.value));
+          let end = clamp(Number(endInput.value) || 0, 0, Number(spanNumber.value));
+          if (start > end) [start, end] = [end, start];
+          startInput.value = start;
+          endInput.value = end;
+        }
+
+        startInput.addEventListener("change", normalizeEndpoints);
+        endInput.addEventListener("change", normalizeEndpoints);
+        card.querySelector(".icon-button").addEventListener("click", (event) => removeLoad(event.currentTarget));
+        updateLoadCount();
+      }
+
+      document.getElementById("add-point").addEventListener("click", () => {
+        addPointLoad(0, Number(spanNumber.value) / 2);
+      });
+
+      document.getElementById("add-uniform").addEventListener("click", () => {
+        addUniformLoad(0, 0, Number(spanNumber.value));
+      });
+
+      document.querySelectorAll('input[name="support"]').forEach((radio) => {
+        radio.addEventListener("change", () => {
+          pointList.querySelectorAll(".point-position").forEach((input) => {
+            input.max = spanNumber.value;
+          });
+          uniformList.querySelectorAll(".uniform-start, .uniform-end").forEach((input) => {
+            input.max = spanNumber.value;
+          });
+        });
+      });
+
+      spanNumber.addEventListener("input", () => {
+        pointList.querySelectorAll(".point-position").forEach((input) => input.max = spanNumber.value);
+        uniformList.querySelectorAll(".uniform-start, .uniform-end").forEach((input) => input.max = spanNumber.value);
+      });
+
+      addUniformLoad(1, 0, 20);
+    </script>
   </body>
 </html>
