@@ -529,8 +529,25 @@
     </main>
 
     <script>
-      const steelSections = ["W8x10", "W10x12", "W12x26", "W14x22", "W16x26", "W18x35", "W21x44", "W24x55"];
-      const lumberSections = ["2x8", "2x10", "2x12"];
+      const sectionTables = {
+        steel: [
+          { name: "W8x10", Ix: 30.8, Sx: 7.81, weight: 10 },
+          { name: "W10x12", Ix: 53.8, Sx: 10.9, weight: 12 },
+          { name: "W12x26", Ix: 204, Sx: 33.4, weight: 26 },
+          { name: "W14x22", Ix: 199, Sx: 29.0, weight: 22 },
+          { name: "W16x26", Ix: 301, Sx: 38.4, weight: 26 },
+          { name: "W18x35", Ix: 510, Sx: 57.6, weight: 35 },
+          { name: "W21x44", Ix: 843, Sx: 81.6, weight: 44 },
+          { name: "W24x55", Ix: 1350, Sx: 114, weight: 55 }
+        ],
+        lumber: [
+          { name: "2x8", Ix: 47.63, Sx: 13.14 },
+          { name: "2x10", Ix: 98.93, Sx: 21.39 },
+          { name: "2x12", Ix: 177.98, Sx: 31.64 }
+        ]
+      };
+      const steelSections = sectionTables.steel.map((section) => section.name);
+      const lumberSections = sectionTables.lumber.map((section) => section.name);
 
       const spanSlider = document.getElementById("span-slider");
       const spanNumber = document.getElementById("span-number");
@@ -554,6 +571,315 @@
       spanSlider.addEventListener("input", () => syncSpan(spanSlider, spanSlider.value));
       spanNumber.addEventListener("input", () => syncSpan(spanNumber, spanNumber.value));
       spanNumber.addEventListener("change", () => syncSpan(spanNumber, spanNumber.value));
+
+      function polygonPositiveLoadIntegral(start, end, x, includeUniform) {
+        let result = 0;
+        if (includeUniform) {
+          const left = Math.max(start, 0);
+          const right = Math.min(end, x);
+          if (right > left) result += right - left;
+        }
+        return result;
+      }
+
+      function collectModel() {
+        const spanFt = Number(spanNumber.value);
+        const pointLoads = [...pointList.querySelectorAll(".load-card")].map((card) => ({
+          magnitude: Math.max(0, Number(card.querySelector(".point-magnitude").value) || 0),
+          positionFt: clamp(Number(card.querySelector(".point-position").value) || 0, 0, spanFt)
+        }));
+        const uniformLoads = [...uniformList.querySelectorAll(".load-card")].map((card) => {
+          let start = clamp(Number(card.querySelector(".uniform-start").value) || 0, 0, spanFt);
+          let end = clamp(Number(card.querySelector(".uniform-end").value) || 0, 0, spanFt);
+          if (start > end) [start, end] = [end, start];
+          return {
+            magnitude: Math.max(0, Number(card.querySelector(".uniform-magnitude").value) || 0),
+            startFt: start,
+            endFt: end
+          };
+        });
+        return {
+          support: document.querySelector('input[name="support"]:checked').value,
+          spanFt,
+          spanIn: spanFt * 12,
+          pointLoads,
+          uniformLoads,
+          deflectionLimit: Number(document.getElementById("deflection-limit").value),
+          material: materialSelect.value,
+          sectionName: sectionSelect.value
+        };
+      }
+
+      function calculateBeam(model) {
+        const L = model.spanIn;
+        const pointLoads = model.pointLoads.map((load) => ({
+          P: load.magnitude,
+          a: load.positionFt * 12
+        }));
+        const uniformLoads = model.uniformLoads.map((load) => ({
+          w: load.magnitude / 12,
+          start: load.startFt * 12,
+          end: load.endFt * 12
+        }));
+        const totalPoint = pointLoads.reduce((sum, load) => sum + load.P, 0);
+        const totalUniform = uniformLoads.reduce((sum, load) => sum + load.w * (load.end - load.start), 0);
+        let reactions;
+
+        if (model.support === "cantilever") {
+          reactions = {
+            left: totalPoint + totalUniform,
+            right: 0,
+            moment: pointLoads.reduce((sum, load) => sum + load.P * load.a, 0)
+              + uniformLoads.reduce((sum, load) => sum + load.w * ((load.end * load.end - load.start * load.start) / 2), 0)
+          };
+        } else {
+          const leftReaction = pointLoads.reduce((sum, load) => sum + load.P * (L - load.a) / L, 0)
+            + uniformLoads.reduce((sum, load) => {
+              const segment = Math.max(0, load.end - load.start);
+              const midpoint = (load.start + load.end) / 2;
+              return sum + load.w * segment * (L - midpoint) / L;
+            }, 0);
+          reactions = { left: leftReaction, right: totalPoint + totalUniform - leftReaction, moment: 0 };
+        }
+
+        function shearAt(x) {
+          if (model.support === "cantilever") {
+            let rightLoads = pointLoads.reduce((sum, load) => load.a > x ? sum + load.P : sum, 0);
+            rightLoads += uniformLoads.reduce((sum, load) => {
+              const overlapStart = Math.max(load.start, x);
+              const overlapEnd = load.end;
+              return overlapEnd > overlapStart ? sum + load.w * (overlapEnd - overlapStart) : sum;
+            }, 0);
+            return -rightLoads;
+          }
+          let shear = reactions.left;
+          for (const load of pointLoads) if (load.a <= x) shear -= load.P;
+          for (const load of uniformLoads) {
+            const overlapStart = load.start;
+            const overlapEnd = Math.min(load.end, x);
+            if (overlapEnd > overlapStart) shear -= load.w * (overlapEnd - overlapStart);
+          }
+          return shear;
+        }
+
+        function momentAt(x) {
+          if (model.support === "cantilever") {
+            let moment = 0;
+            for (const load of pointLoads) {
+              if (load.a > x) moment -= load.P * (load.a - x);
+            }
+            for (const load of uniformLoads) {
+              const segmentStart = Math.max(load.start, x);
+              const segmentEnd = load.end;
+              if (segmentEnd > segmentStart) {
+                moment -= load.w * (segmentEnd - segmentStart) * ((segmentStart + segmentEnd) / 2 - x);
+              }
+            }
+            return moment;
+          }
+          let moment = reactions.left * x;
+          for (const load of pointLoads) {
+            if (x > load.a) moment -= load.P * (x - load.a);
+          }
+          for (const load of uniformLoads) {
+            const overlapStart = load.start;
+            const overlapEnd = Math.min(load.end, x);
+            if (overlapEnd > overlapStart) {
+              const length = overlapEnd - overlapStart;
+              const midpoint = (overlapStart + overlapEnd) / 2;
+              moment -= load.w * length * (x - midpoint);
+            }
+          }
+          return moment;
+        }
+
+        function extremaFor(type) {
+          const breakpoints = [0, L];
+          for (const load of pointLoads) breakpoints.push(load.a);
+          for (const load of uniformLoads) breakpoints.push(load.start, load.end);
+          breakpoints.sort((a, b) => a - b);
+          const unique = [...new Set(breakpoints.map((x) => Math.round(x * 1e9) / 1e9))];
+          const step = 3;
+          let candidates = [0, L, ...unique];
+          for (let x = 0; x <= L; x += step) candidates.push(x);
+          candidates = [...new Set(candidates.filter((x) => x >= 0 && x <= L))];
+
+          let maxValue = -Infinity;
+          let minValue = Infinity;
+          let maxX = 0;
+          let minX = 0;
+          for (const x of candidates) {
+            const value = type === "shear" ? shearAt(x) : momentAt(x);
+            if (value > maxValue) { maxValue = value; maxX = x; }
+            if (value < minValue) { minValue = value; minX = x; }
+          }
+          const extremes = [
+            { value: maxValue, absValue: Math.abs(maxValue), x: maxX },
+            { value: minValue, absValue: Math.abs(minValue), x: minX }
+          ];
+          extremes.sort((a, b) => b.absValue - a.absValue || a.x - b.x);
+          return extremes[0];
+        }
+
+        function deflectionAtLocations(EI) {
+          const step = 1;
+          const points = [];
+          let slope = 0;
+          let deflection = 0;
+          let previousCurvature = momentAt(0) / EI;
+          let previousSlope = 0;
+          let previousDeflection = 0;
+          points.push({ x: 0, y: 0, slope: 0 });
+
+          for (let x = step; x <= L + 1e-7; x += step) {
+            const currentX = Math.min(x, L);
+            const curvature = momentAt(currentX) / EI;
+            slope = previousSlope + (previousCurvature + curvature) * step / 2;
+            deflection = previousDeflection + (previousSlope + slope) * step / 2;
+            points.push({ x: currentX, y: deflection, slope });
+            previousCurvature = curvature;
+            previousSlope = slope;
+            previousDeflection = deflection;
+          }
+
+          if (model.support === "simply-supported") {
+            const correction = points[points.length - 1].y / L;
+            for (const point of points) {
+              point.y -= correction * point.x;
+              point.slope -= correction;
+            }
+          }
+          return points;
+        }
+
+        function deflectionForSection(section) {
+          const materialE = model.material === "steel" ? 29000 : 1600;
+          const EI = materialE * section.Ix;
+          const points = deflectionAtLocations(EI);
+          let maximum = { abs: 0, y: 0, x: 0 };
+          for (const point of points) {
+            if (Math.abs(point.y) > maximum.abs) {
+              maximum = { abs: Math.abs(point.y), y: point.y, x: point.x };
+            }
+          }
+          return { points, maximum };
+        }
+
+        return {
+          model,
+          reactions,
+          shearAt,
+          momentAt,
+          extremaFor,
+          deflectionForSection
+        };
+      }
+
+      function sectionByName(material, name) {
+        return sectionTables[material].find((section) => section.name === name);
+      }
+
+      function evaluateSection(model, section) {
+        const analysis = calculateBeam(model);
+        const shearExtreme = analysis.extremaFor("shear");
+        const momentExtreme = analysis.extremaFor("moment");
+        const maxMomentKipIn = Math.abs(momentExtreme.absValue);
+        const maxMomentKipFt = maxMomentKipIn / 12;
+        const bendingStress = maxMomentKipIn / section.Sx;
+        const allowableBending = model.material === "steel" ? 30 : 0.9;
+        const deflection = analysis.deflectionForSection(section);
+        const allowableDeflection = analysis.model.spanIn / model.deflectionLimit;
+        return {
+          analysis,
+          shearExtreme,
+          momentExtreme,
+          maxMomentKipFt,
+          bendingStress,
+          allowableBending,
+          deflection,
+          allowableDeflection,
+          bendingPass: bendingStress <= allowableBending,
+          deflectionPass: deflection.maximum.abs <= allowableDeflection
+        };
+      }
+
+      function findLightestPassing(model) {
+        if (model.material === "steel") {
+          const passing = sectionTables.steel
+            .filter((section) => {
+              const result = evaluateSection(model, section);
+              return result.bendingPass && result.deflectionPass;
+            })
+            .sort((a, b) =>
+              a.weight - b.weight ||
+              b.Ix - a.Ix
+            );
+          return passing[0] || null;
+        }
+        return sectionTables.lumber.find((section) => {
+          const result = evaluateSection(model, section);
+          return result.bendingPass && result.deflectionPass;
+        }) || null;
+      }
+
+      function ratioColor(ratio) {
+        if (ratio < 0.7) return "#22c55e";
+        if (ratio <= 1) return "#f59e0b";
+        return "#ef4444";
+      }
+
+      function updateCalculations() {
+        const model = collectModel();
+        const section = sectionByName(model.material, model.sectionName);
+        if (!section) return;
+        const result = evaluateSection(model, section);
+        const bendingCard = document.querySelectorAll(".check-card")[0];
+        const deflectionCard = document.querySelectorAll(".check-card")[1];
+        const bendingStatus = bendingCard.querySelector(".status");
+        const deflectionStatus = deflectionCard.querySelector(".status");
+        const bendingValue = bendingCard.querySelector(".check-value");
+        const deflectionValue = deflectionCard.querySelector(".check-value");
+        const bendingRatio = result.bendingStress / result.allowableBending;
+        const deflectionRatio = result.deflection.maximum.abs / result.allowableDeflection;
+
+        bendingStatus.textContent = result.bendingPass ? "PASS" : "FAIL";
+        bendingStatus.style.color = result.bendingPass ? "#166534" : "#b91c1c";
+        bendingValue.innerHTML = `${result.bendingStress.toFixed(2)} <small>ksi actual / ${result.allowableBending.toFixed(3)} ksi allowable</small>`;
+        const bendingBar = bendingCard.querySelector(".bar-fill");
+        bendingBar.style.width = `${Math.min(bendingRatio * 100, 100)}%`;
+        bendingBar.style.background = ratioColor(bendingRatio);
+
+        deflectionStatus.textContent = result.deflectionPass ? "PASS" : "FAIL";
+        deflectionStatus.style.color = result.deflectionPass ? "#166534" : "#b91c1c";
+        deflectionValue.innerHTML = `${result.deflection.maximum.abs.toFixed(3)} <small>in actual / ${result.allowableDeflection.toFixed(3)} in allowable</small>`;
+        const deflectionBar = deflectionCard.querySelector(".bar-fill");
+        deflectionBar.style.width = `${Math.min(deflectionRatio * 100, 100)}%`;
+        deflectionBar.style.background = ratioColor(deflectionRatio);
+
+        const recommendation = document.querySelector(".recommendation");
+        const recommendationText = recommendation.querySelector("p");
+        const recommendationButton = recommendation.querySelector("button");
+        const lightest = findLightestPassing(model);
+        if (lightest) {
+          recommendationText.textContent = `${lightest.name} is the lightest passing section for the selected material.`;
+          recommendationButton.disabled = false;
+          recommendationButton.dataset.section = lightest.name;
+        } else {
+          recommendationText.textContent = "No section in the selected material passes both checks.";
+          recommendationButton.disabled = true;
+          recommendationButton.dataset.section = "";
+        }
+
+        document.querySelector(".recommendation button").onclick = () => {
+          if (recommendationButton.dataset.section) sectionSelect.value = recommendationButton.dataset.section;
+          updateCalculations();
+        };
+
+        const beamPlaceholder = document.getElementById("beam-placeholder");
+        beamPlaceholder.innerHTML = model.support === "cantilever"
+          ? `Fixed-end reaction: ${result.analysis.reactions.left.toFixed(2)} k upward; fixed-end moment: ${(result.analysis.reactions.moment / 12).toFixed(2)} kip-ft`
+          : `Reactions: ${result.analysis.reactions.left.toFixed(2)} k left; ${result.analysis.reactions.right.toFixed(2)} k right`;
+      }
 
       function updateSections() {
         const sections = materialSelect.value === "steel" ? steelSections : lumberSections;
@@ -589,6 +915,7 @@
       function removeLoad(button) {
         button.closest(".load-card").remove();
         updateLoadCount();
+        updateCalculations();
       }
 
       function addPointLoad(magnitude = 10, position = 10) {
@@ -618,6 +945,7 @@
         });
         card.querySelector(".icon-button").addEventListener("click", (event) => removeLoad(event.currentTarget));
         updateLoadCount();
+        updateCalculations();
       }
 
       function addUniformLoad(magnitude = 1, start = 0, end = 20) {
@@ -660,10 +988,12 @@
         endInput.addEventListener("change", normalizeEndpoints);
         card.querySelector(".icon-button").addEventListener("click", (event) => removeLoad(event.currentTarget));
         updateLoadCount();
+        updateCalculations();
       }
 
       document.getElementById("add-point").addEventListener("click", () => {
-        addPointLoad(0, Number(spanNumber.value) / 2);
+        const support = document.querySelector('input[name="support"]:checked').value;
+        addPointLoad(0, support === "cantilever" ? Number(spanNumber.value) : Number(spanNumber.value) / 2);
       });
 
       document.getElementById("add-uniform").addEventListener("click", () => {
@@ -687,6 +1017,69 @@
       });
 
       addUniformLoad(1, 0, 20);
+
+      document.querySelectorAll("input, select").forEach((control) => {
+        control.addEventListener("input", updateCalculations);
+        control.addEventListener("change", updateCalculations);
+      });
+
+      materialSelect.addEventListener("change", () => {
+        updateSections();
+        updateCalculations();
+      });
+
+      function runValidationCases() {
+        const cases = [
+          {
+            name: "Simply supported uniform",
+            model: { support: "simply-supported", spanFt: 20, spanIn: 240, pointLoads: [], uniformLoads: [{ magnitude: 1, startFt: 0, endFt: 20 }], deflectionLimit: 360, material: "steel", sectionName: "W12x26" },
+            section: sectionTables.steel.find((section) => section.name === "W12x26")
+          },
+          {
+            name: "Simply supported off-center point",
+            model: { support: "simply-supported", spanFt: 20, spanIn: 240, pointLoads: [{ magnitude: 10, positionFt: 5 }], uniformLoads: [], deflectionLimit: 360, material: "steel", sectionName: "W12x26" },
+            section: sectionTables.steel.find((section) => section.name === "W12x26")
+          },
+          {
+            name: "Cantilever point",
+            model: { support: "cantilever", spanFt: 10, spanIn: 120, pointLoads: [{ magnitude: 5, positionFt: 10 }], uniformLoads: [], deflectionLimit: 360, material: "steel", sectionName: "W12x26" },
+            section: sectionTables.steel.find((section) => section.name === "W12x26")
+          },
+          {
+            name: "Lumber uniform",
+            model: { support: "simply-supported", spanFt: 12, spanIn: 144, pointLoads: [], uniformLoads: [{ magnitude: 0.05, startFt: 0, endFt: 12 }], deflectionLimit: 360, material: "lumber", sectionName: "2x10" },
+            section: sectionTables.lumber.find((section) => section.name === "2x10")
+          }
+        ];
+
+        return cases.map((test) => {
+          const result = evaluateSection(test.model, test.section);
+          return {
+            name: test.name,
+            reactions: result.analysis.reactions,
+            shearExtreme: result.shearExtreme,
+            momentExtreme: result.momentExtreme,
+            momentKipFt: result.maxMomentKipFt,
+            bendingStress: result.bendingStress,
+            deflection: result.deflection.maximum.abs,
+            deflectionLocationFt: result.deflection.maximum.x / 12,
+            allowableDeflection: result.allowableDeflection,
+            bendingPass: result.bendingPass,
+            deflectionPass: result.deflectionPass
+          };
+        });
+      }
+
+      window.BeamDesigner = {
+        calculateBeam,
+        evaluateSection,
+        findLightestPassing,
+        runValidationCases
+      };
+
+      updateCalculations();
+      window.beamValidationResults = runValidationCases();
+      console.table(window.beamValidationResults);
     </script>
   </body>
 </html>
