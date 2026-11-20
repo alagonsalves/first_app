@@ -754,6 +754,23 @@
           const step = 3;
           let candidates = [0, L, ...unique];
           for (let x = 0; x <= L; x += step) candidates.push(x);
+          if (type === "moment") {
+            for (let x = 0; x < L; x += step) {
+              const nextX = Math.min(x + step, L);
+              const leftShear = shearAt(x);
+              const rightShear = shearAt(nextX);
+              if (leftShear * rightShear < 0) {
+                let low = x;
+                let high = nextX;
+                for (let iteration = 0; iteration < 40; iteration++) {
+                  const midpoint = (low + high) / 2;
+                  if (shearAt(low) * shearAt(midpoint) <= 0) high = midpoint;
+                  else low = midpoint;
+                }
+                candidates.push((low + high) / 2);
+              }
+            }
+          }
           candidates = [...new Set(candidates.filter((x) => x >= 0 && x <= L))];
 
           let maxValue = -Infinity;
@@ -834,9 +851,16 @@
               point.slope -= correction;
             }
           }
-          for (const point of reconstructed) {
-            point.y = -point.y;
-            point.slope = -point.slope;
+          const signReference = model.support === "simply-supported"
+            ? reconstructed.reduce((nearest, point) =>
+                Math.abs(point.x - L / 2) < Math.abs(nearest.x - L / 2) ? point : nearest,
+              reconstructed[0])
+            : reconstructed[reconstructed.length - 1];
+          if (signReference.y < 0) {
+            for (const point of reconstructed) {
+              point.y = -point.y;
+              point.slope = -point.slope;
+            }
           }
           return reconstructed;
         }
@@ -1001,20 +1025,29 @@
           svg.appendChild(svgElement("line", { x1: right - 18, y1: yBeam + 30, x2: right + 18, y2: yBeam + 30, stroke: "#64748b", "stroke-width": 3 }));
         }
 
-        for (const load of model.pointLoads) {
+        for (const [loadIndex, load] of model.pointLoads.entries()) {
           const x = plotX(load.positionFt * 12, spanIn);
-          svg.appendChild(svgElement("line", {
+          const loadGroup = svgElement("g", {
+            "data-point-index": loadIndex,
+            style: "cursor: ew-resize"
+          });
+          loadGroup.appendChild(svgElement("line", {
             x1: x, y1: 32, x2: x, y2: yBeam - 8,
             stroke: "#2563eb", "stroke-width": 3, "marker-end": "url(#arrowhead)"
           }));
-          svg.appendChild(svgElement("path", {
+          loadGroup.appendChild(svgElement("path", {
             d: `M ${x - 7} ${yBeam - 18} L ${x} ${yBeam - 8} L ${x + 7} ${yBeam - 18} Z`,
             fill: "#2563eb"
           }));
-          svg.appendChild(svgElement("text", {
+          loadGroup.appendChild(svgElement("circle", {
+            cx: x, cy: yBeam - 8, r: 12,
+            fill: "transparent", stroke: "none"
+          }));
+          loadGroup.appendChild(svgElement("text", {
             x, y: 24, "text-anchor": "middle",
             fill: "#1d4ed8", "font-size": 12, "font-weight": 700
           }, `${load.magnitude.toFixed(2)} k`));
+          svg.appendChild(loadGroup);
         }
 
         for (const load of model.uniformLoads) {
@@ -1062,6 +1095,47 @@
           svg.appendChild(svgElement("text", { x: left + 8, y: 152, "text-anchor": "start", fill: "#166534", "font-size": 12, "font-weight": 700 }, `${result.analysis.reactions.left.toFixed(2)} k`));
           svg.appendChild(svgElement("text", { x: left + 8, y: 164, "text-anchor": "start", fill: "#166534", "font-size": 11 }, `M = ${(result.analysis.reactions.moment / 12).toFixed(2)} kip-ft`));
         }
+
+        svg.onpointerdown = (event) => {
+          const rect = svg.getBoundingClientRect();
+          const viewX = ((event.clientX - rect.left) / rect.width) * 800;
+          if (viewX < plotGeometry.left || viewX > plotGeometry.right) return;
+
+          let nearestIndex = -1;
+          let nearestDistance = Infinity;
+          model.pointLoads.forEach((load, index) => {
+            const loadX = plotX(load.positionFt * 12, spanIn);
+            const distance = Math.abs(viewX - loadX);
+            if (distance < nearestDistance) {
+              nearestDistance = distance;
+              nearestIndex = index;
+            }
+          });
+          if (nearestIndex < 0 || nearestDistance > 24) return;
+
+          event.preventDefault();
+
+          function movePoint(moveEvent) {
+            const currentRect = svg.getBoundingClientRect();
+            const currentViewX = ((moveEvent.clientX - currentRect.left) / currentRect.width) * 800;
+            const fraction = clamp((currentViewX - plotGeometry.left) / (plotGeometry.right - plotGeometry.left), 0, 1);
+            const snappedFt = Math.round((fraction * model.spanFt) * 4) / 4;
+            const cards = [...pointList.querySelectorAll(".load-card")];
+            const positionInput = cards[nearestIndex]?.querySelector(".point-position");
+            if (positionInput) {
+              positionInput.value = snappedFt.toFixed(2);
+              updateCalculations();
+            }
+          }
+
+          movePoint(event);
+          function stopPoint() {
+            window.removeEventListener("pointermove", movePoint);
+            window.removeEventListener("pointerup", stopPoint);
+          }
+          window.addEventListener("pointermove", movePoint);
+          window.addEventListener("pointerup", stopPoint);
+        };
       }
 
       function renderDiagram(svgId, model, result, type) {
