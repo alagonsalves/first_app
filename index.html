@@ -29,9 +29,14 @@
         height: 68px;
         display: flex;
         align-items: center;
+        justify-content: space-between;
         padding: 0 28px;
         background: var(--panel);
         border-bottom: 1px solid var(--line);
+      }
+
+      .print-report {
+        display: none;
       }
 
       .brand {
@@ -475,6 +480,147 @@
         .input-panel { max-height: none; }
         .checks { grid-template-columns: 1fr; }
       }
+
+      @page {
+        size: Letter portrait;
+        margin: 0.45in;
+      }
+
+      @media print {
+        * {
+          -webkit-print-color-adjust: exact;
+          print-color-adjust: exact;
+        }
+
+        html, body {
+          width: 100%;
+          min-width: 0;
+          margin: 0;
+          background: white;
+        }
+
+        body > .app-header,
+        body > .layout,
+        .hover-readout,
+        #print-button {
+          display: none !important;
+        }
+
+        .print-report {
+          display: block;
+          color: #172033;
+          font-size: 9pt;
+          line-height: 1.25;
+        }
+
+        .print-report section,
+        .print-report .print-diagram,
+        .print-report table {
+          break-inside: avoid;
+          page-break-inside: avoid;
+        }
+
+        .print-header {
+          display: flex;
+          align-items: flex-end;
+          justify-content: space-between;
+          border-bottom: 2px solid #2563eb;
+          padding-bottom: 6px;
+          margin-bottom: 10px;
+        }
+
+        .print-header h1 {
+          margin: 0;
+          font-size: 20pt;
+        }
+
+        .print-header p {
+          margin: 0;
+          color: #64748b;
+          font-size: 8pt;
+        }
+
+        .print-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 8px;
+        }
+
+        .print-section {
+          border: 1px solid #cbd5e1;
+          border-radius: 5px;
+          padding: 7px;
+          margin-bottom: 8px;
+        }
+
+        .print-section h2 {
+          margin: 0 0 5px;
+          font-size: 11pt;
+          color: #1d4ed8;
+        }
+
+        .print-section table {
+          width: 100%;
+          border-collapse: collapse;
+        }
+
+        .print-section th,
+        .print-section td {
+          border-bottom: 1px solid #e2e8f0;
+          padding: 3px 4px;
+          text-align: left;
+          vertical-align: top;
+        }
+
+        .print-section th {
+          background: #f1f5f9;
+          font-weight: 700;
+        }
+
+        .print-status-pass {
+          color: #166534;
+          font-weight: 700;
+        }
+
+        .print-status-fail {
+          color: #b91c1c;
+          font-weight: 700;
+        }
+
+        .print-diagrams {
+          display: grid;
+          gap: 5px;
+        }
+
+        .print-diagram {
+          border: 1px solid #cbd5e1;
+          border-radius: 4px;
+          padding: 4px 6px;
+        }
+
+        .print-diagram h3 {
+          margin: 0 0 2px;
+          font-size: 9pt;
+        }
+
+        .print-diagram svg {
+          display: block;
+          width: 100%;
+          height: 78px;
+        }
+
+        .print-diagram .print-beam-svg {
+          height: 112px;
+        }
+
+        .print-disclaimer {
+          border-top: 1px solid #94a3b8;
+          margin-top: 8px;
+          padding-top: 6px;
+          color: #475569;
+          font-size: 7.5pt;
+        }
+      }
     </style>
   </head>
   <body>
@@ -483,6 +629,7 @@
         <div class="brand-mark">BD</div>
         <span>Beam Designer</span>
       </div>
+      <button class="button primary" id="print-button" type="button">Print / Save PDF</button>
     </header>
 
     <main class="layout">
@@ -612,6 +759,8 @@
         </div>
       </section>
     </main>
+
+    <div class="print-report" id="print-report" aria-hidden="true"></div>
 
     <script>
       const sectionTables = {
@@ -1384,6 +1533,166 @@
         });
       }
 
+      function escapeHtml(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;");
+      }
+
+      function cloneSvgForPrint(svgId, printClass = "") {
+        const source = document.getElementById(svgId);
+        if (!source) return "";
+        const clone = source.cloneNode(true);
+        clone.removeAttribute("id");
+        clone.removeAttribute("aria-label");
+        clone.removeAttribute("role");
+        clone.querySelectorAll(".hover-line").forEach((line) => line.remove());
+        clone.setAttribute("aria-hidden", "true");
+        if (printClass) clone.setAttribute("class", printClass);
+        return clone.outerHTML;
+      }
+
+      function updatePrintReport() {
+        const model = collectModel();
+        const section = sectionByName(model.material, model.sectionName);
+        if (!section) return;
+        const result = evaluateSection(model, section);
+        const lightest = findLightestPassing(model);
+        const E = model.material === "steel" ? 29000 : 1600;
+        const Fb = model.material === "steel" ? 30 : 0.9;
+        const bendingRatio = result.bendingStress / result.allowableBending;
+        const deflectionRatio = result.deflection.maximum.abs / result.allowableDeflection;
+
+        const pointRows = model.pointLoads.length
+          ? model.pointLoads.map((load) =>
+              `<tr><td>Point load</td><td>${load.magnitude.toFixed(2)} kips</td><td>${load.positionFt.toFixed(2)} ft</td></tr>`
+            ).join("")
+          : '<tr><td>Point loads</td><td>None</td><td>—</td></tr>';
+        const uniformRows = model.uniformLoads.length
+          ? model.uniformLoads.map((load) =>
+              `<tr><td>Uniform load</td><td>${load.magnitude.toFixed(3)} kips/ft</td><td>${load.startFt.toFixed(2)} to ${load.endFt.toFixed(2)} ft</td></tr>`
+            ).join("")
+          : '<tr><td>Uniform loads</td><td>None</td><td>—</td></tr>';
+
+        const selfWeightText = model.material === "steel"
+          ? (model.includeSelfWeight
+              ? `On — ${section.name}: ${(section.weight / 1000).toFixed(3)} kips/ft across 0 to ${model.spanFt.toFixed(2)} ft`
+              : "Off")
+          : "Off — lumber sections have no steel self-weight";
+
+        const reactionHtml = model.support === "cantilever"
+          ? `<tr><td>Fixed reaction</td><td>${result.analysis.reactions.left.toFixed(2)} k upward</td></tr>
+             <tr><td>Fixed-end moment</td><td>${(result.analysis.reactions.moment / 12).toFixed(2)} kip-ft</td></tr>`
+          : `<tr><td>Left reaction</td><td>${result.analysis.reactions.left.toFixed(2)} k upward</td></tr>
+             <tr><td>Right reaction</td><td>${result.analysis.reactions.right.toFixed(2)} k upward</td></tr>`;
+
+        const report = document.getElementById("print-report");
+        report.setAttribute("aria-hidden", "false");
+        report.innerHTML = `
+          <header class="print-header">
+            <h1>Beam Calculation Report</h1>
+            <p>Generated ${escapeHtml(new Date().toLocaleString())}</p>
+          </header>
+
+          <div class="print-grid">
+            <section class="print-section">
+              <h2>Beam and Loading</h2>
+              <table>
+                <tr><th>Input</th><th colspan="2">Value</th></tr>
+                <tr><td>Support</td><td colspan="2">${model.support === "cantilever" ? "Cantilever, fixed at left" : "Simply supported"}</td></tr>
+                <tr><td>Span</td><td colspan="2">${model.spanFt.toFixed(2)} ft (${model.spanIn.toFixed(2)} in)</td></tr>
+                <tr><td>Deflection limit</td><td colspan="2">L/${model.deflectionLimit}</td></tr>
+                <tr><td>Material</td><td colspan="2">${model.material === "steel" ? "Steel" : "Douglas Fir-Larch No. 2 Lumber"}</td></tr>
+                <tr><td>Selected section</td><td colspan="2">${escapeHtml(section.name)}</td></tr>
+                <tr><td>Steel self-weight</td><td colspan="2">${escapeHtml(selfWeightText)}</td></tr>
+              </table>
+            </section>
+
+            <section class="print-section">
+              <h2>Section Properties</h2>
+              <table>
+                <tr><th>Property</th><th colspan="2">Value</th></tr>
+                <tr><td>Modulus of elasticity E</td><td colspan="2">${E.toLocaleString()} ksi</td></tr>
+                <tr><td>Moment of inertia Ix</td><td colspan="2">${section.Ix} in^4</td></tr>
+                <tr><td>Section modulus Sx</td><td colspan="2">${section.Sx} in^3</td></tr>
+                <tr><td>Allowable bending stress Fb</td><td colspan="2">${Fb.toFixed(3)} ksi</td></tr>
+                ${model.material === "steel" ? `<tr><td>Section weight</td><td colspan="2">${section.weight} lb/ft</td></tr>` : ""}
+              </table>
+            </section>
+          </div>
+
+          <section class="print-section">
+            <h2>Applied Loads</h2>
+            <table>
+              <tr><th>Type</th><th>Magnitude</th><th>Position / Range</th></tr>
+              ${pointRows}
+              ${uniformRows}
+              ${model.includeSelfWeight && model.material === "steel"
+                ? `<tr><td>Synthetic steel self-weight</td><td>${(section.weight / 1000).toFixed(3)} kips/ft</td><td>0 to ${model.spanFt.toFixed(2)} ft</td></tr>`
+                : ""}
+            </table>
+          </section>
+
+          <div class="print-grid">
+            <section class="print-section">
+              <h2>Reactions and Extrema</h2>
+              <table>
+                ${reactionHtml}
+                <tr><td>Maximum shear</td><td>${result.shearExtreme.absValue.toFixed(2)} k at ${(result.shearExtreme.x / 12).toFixed(2)} ft</td></tr>
+                <tr><td>Maximum moment</td><td>${result.maxMomentKipFt.toFixed(2)} kip-ft at ${(result.momentExtreme.x / 12).toFixed(2)} ft</td></tr>
+                <tr><td>Maximum deflection</td><td>${result.deflection.maximum.abs.toFixed(3)} in at ${(result.deflection.maximum.x / 12).toFixed(2)} ft</td></tr>
+              </table>
+            </section>
+
+            <section class="print-section">
+              <h2>Checks</h2>
+              <table>
+                <tr><th>Check</th><th>Value</th><th>Status</th></tr>
+                <tr>
+                  <td>Bending</td>
+                  <td>${result.bendingStress.toFixed(2)} / ${result.allowableBending.toFixed(3)} ksi (ratio ${bendingRatio.toFixed(3)})</td>
+                  <td class="${result.bendingPass ? "print-status-pass" : "print-status-fail"}">${result.bendingPass ? "PASS" : "FAIL"}</td>
+                </tr>
+                <tr>
+                  <td>Deflection</td>
+                  <td>${result.deflection.maximum.abs.toFixed(3)} / ${result.allowableDeflection.toFixed(3)} in (ratio ${deflectionRatio.toFixed(3)})</td>
+                  <td class="${result.deflectionPass ? "print-status-pass" : "print-status-fail"}">${result.deflectionPass ? "PASS" : "FAIL"}</td>
+                </tr>
+              </table>
+              <p><strong>Recommended section:</strong> ${lightest ? escapeHtml(lightest.name) : "No passing section"}</p>
+            </section>
+          </div>
+
+          <section class="print-section print-diagrams">
+            <h2>Diagrams</h2>
+            <div class="print-diagram">
+              <h3>Beam</h3>
+              ${cloneSvgForPrint("beam-svg", "print-beam-svg")}
+            </div>
+            <div class="print-diagram">
+              <h3>Shear (kips)</h3>
+              ${cloneSvgForPrint("shear-svg")}
+            </div>
+            <div class="print-diagram">
+              <h3>Moment (kip-ft)</h3>
+              ${cloneSvgForPrint("moment-svg")}
+            </div>
+            <div class="print-diagram">
+              <h3>Deflection (in)</h3>
+              ${cloneSvgForPrint("deflection-svg")}
+            </div>
+          </section>
+
+          <div class="print-disclaimer">
+            <strong>Educational-use disclaimer:</strong> This report is provided for educational and preliminary planning purposes only.
+            It is not a certified engineering calculation. A qualified professional must independently verify loads, assumptions,
+            section properties, safety factors, code requirements, and constructability before any construction or engineering use.
+          </div>
+        `;
+      }
+
       function updateCalculations() {
         const model = collectModel();
         const section = sectionByName(model.material, model.sectionName);
@@ -1606,6 +1915,16 @@
       });
 
       addUniformLoad(1, 0, 20);
+
+      const printButton = document.getElementById("print-button");
+      printButton.addEventListener("click", () => {
+        updatePrintReport();
+        window.print();
+      });
+      window.addEventListener("beforeprint", updatePrintReport);
+      window.addEventListener("afterprint", () => {
+        document.getElementById("print-report").setAttribute("aria-hidden", "true");
+      });
 
       document.querySelectorAll("input, select").forEach((control) => {
         control.addEventListener("input", updateCalculations);

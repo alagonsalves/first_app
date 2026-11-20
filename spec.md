@@ -134,6 +134,24 @@ sizing a floor beam or deck joist.
   70% through 100%, and red above 100%. Exactly 100% passes.
 - A line suggesting the lightest passing section, with a button to use it.
 - Everything updates immediately whenever any input changes.
+- A "Print / Save PDF" button uses the browser native print dialog.
+- Printing produces a clean US Letter portrait report containing:
+  - report title and generated date
+  - support type and span
+  - deflection limit
+  - material and section properties
+  - point and uniform loads
+  - steel self-weight status and derived kips/ft
+  - support reactions
+  - maximum shear, moment, and deflection with locations
+  - beam, shear, moment, and deflection diagrams
+  - bending and deflection checks
+  - recommended lightest passing section
+  - educational-use disclaimer
+- Printed data must come from the current app inputs and unrounded
+  calculation state. Interactive controls, hover readouts, buttons, and
+  screen-only navigation must be hidden in the print report.
+- The report must remain single-file and use no external dependencies.
 
 ## Look and feel
 - Opens with an example already loaded (20 ft simply supported W12x26
@@ -178,6 +196,10 @@ sizing a floor beam or deck joist.
    checks and Ix/Sx properties must change with each section. W12x26 gives
    1.30 kip-ft moment, 0.467 ksi stress, and 0.016 in deflection; W10x12
    gives 0.60 kip-ft moment, 0.661 ksi stress, and 0.028 in deflection.
+9. Printable report: Print Preview and Save-to-PDF tests for the default
+   example, cantilever case, off-center point load, lumber case, steel
+   self-weight on/off, and combined point/uniform loads. Verify every report
+   section, disclaimer, diagram, and result matches the live app.
 9. Steel-to-lumber switch: lumber selection turns self-weight off and excludes
    all steel self-weight. 12 ft simply supported 2x10 with 0.05 kip/ft
    external uniform load retains the original no-self-weight result.
