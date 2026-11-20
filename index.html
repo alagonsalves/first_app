@@ -261,6 +261,7 @@
       .drawing-card { padding: 16px; }
 
       .analysis-stack {
+        position: relative;
         display: grid;
         gap: 12px;
       }
@@ -321,6 +322,55 @@
         color: var(--muted);
         font-size: 12px;
         text-align: center;
+      }
+
+      .plot-frame {
+        height: 118px;
+        margin-inline: var(--plot-inset, 32px);
+        border: 1px solid #dfe6ef;
+        border-radius: 8px;
+        background: #ffffff;
+        overflow: hidden;
+      }
+
+      .beam-placeholder.plot-frame {
+        display: block;
+        min-height: 170px;
+        height: 170px;
+        padding: 0;
+        border-style: solid;
+        background: #ffffff;
+      }
+
+      .plot-svg {
+        display: block;
+        width: 100%;
+        height: 100%;
+        cursor: crosshair;
+        user-select: none;
+      }
+
+      .hover-readout {
+        position: absolute;
+        z-index: 4;
+        min-width: 180px;
+        padding: 8px 10px;
+        border: 1px solid #cbd5e1;
+        border-radius: 7px;
+        background: rgba(255, 255, 255, 0.96);
+        box-shadow: 0 5px 16px rgba(23, 32, 51, 0.12);
+        color: var(--ink);
+        font-size: 11px;
+        line-height: 1.6;
+        pointer-events: none;
+        opacity: 0;
+      }
+
+      .hover-readout strong {
+        display: block;
+        margin-bottom: 2px;
+        color: var(--accent);
+        font-size: 12px;
       }
 
       .checks {
@@ -481,25 +531,26 @@
               <h2>Beam</h2>
               <span>Loading diagram</span>
             </div>
-            <div class="beam-placeholder" id="beam-placeholder">
-              Beam drawing placeholder
+            <div class="beam-placeholder plot-frame" id="beam-placeholder">
+              <svg id="beam-svg" class="plot-svg" role="img" aria-label="Beam loading diagram"></svg>
             </div>
           </div>
 
           <div class="diagram-grid">
             <div class="card diagram-card">
               <div class="card-heading"><h2>Shear</h2><span>kips</span></div>
-              <div class="diagram-placeholder">Shear diagram placeholder</div>
+              <div class="plot-frame"><svg id="shear-svg" class="plot-svg" role="img" aria-label="Shear diagram"></svg></div>
             </div>
             <div class="card diagram-card">
               <div class="card-heading"><h2>Moment</h2><span>kip-ft</span></div>
-              <div class="diagram-placeholder">Moment diagram placeholder</div>
+              <div class="plot-frame"><svg id="moment-svg" class="plot-svg" role="img" aria-label="Moment diagram"></svg></div>
             </div>
             <div class="card diagram-card">
               <div class="card-heading"><h2>Deflection</h2><span>in</span></div>
-              <div class="diagram-placeholder">Deflection diagram placeholder</div>
+              <div class="plot-frame"><svg id="deflection-svg" class="plot-svg" role="img" aria-label="Deflection diagram"></svg></div>
             </div>
           </div>
+          <div class="hover-readout" id="hover-readout"></div>
         </div>
 
         <div class="checks">
@@ -644,13 +695,14 @@
 
         function shearAt(x) {
           if (model.support === "cantilever") {
-            let rightLoads = pointLoads.reduce((sum, load) => load.a > x ? sum + load.P : sum, 0);
-            rightLoads += uniformLoads.reduce((sum, load) => {
-              const overlapStart = Math.max(load.start, x);
-              const overlapEnd = load.end;
-              return overlapEnd > overlapStart ? sum + load.w * (overlapEnd - overlapStart) : sum;
-            }, 0);
-            return -rightLoads;
+            let shear = reactions.left;
+            for (const load of pointLoads) if (load.a <= x) shear -= load.P;
+            for (const load of uniformLoads) {
+              const overlapStart = load.start;
+              const overlapEnd = Math.min(load.end, x);
+              if (overlapEnd > overlapStart) shear -= load.w * (overlapEnd - overlapStart);
+            }
+            return shear;
           }
           let shear = reactions.left;
           for (const load of pointLoads) if (load.a <= x) shear -= load.P;
@@ -722,7 +774,7 @@
         }
 
         function deflectionAtLocations(EI) {
-          const step = 1;
+          const step = 3;
           const points = [];
           let slope = 0;
           let deflection = 0;
@@ -742,14 +794,51 @@
             previousDeflection = deflection;
           }
 
+          for (const load of pointLoads) {
+            if (!points.some((point) => Math.abs(point.x - load.a) < 1e-7)) {
+              points.push({ x: load.a, y: null, slope: null });
+            }
+          }
+          for (const load of uniformLoads) {
+            for (const x of [load.start, load.end]) {
+              if (!points.some((point) => Math.abs(point.x - x) < 1e-7)) {
+                points.push({ x, y: null, slope: null });
+              }
+            }
+          }
+          points.sort((a, b) => a.x - b.x);
+          const reconstructed = [{ x: 0, y: 0, slope: 0 }];
+          let prevSlope = 0;
+          let prevDeflection = 0;
+          let prevCurvature = momentAt(0) / EI;
+          let previousX = 0;
+          for (let i = 1; i < points.length; i++) {
+            const currentX = points[i].x;
+            const dx = currentX - previousX;
+            if (dx > 0) {
+              const curvature = momentAt(currentX) / EI;
+              const nextSlope = prevSlope + (prevCurvature + curvature) * dx / 2;
+              const nextDeflection = prevDeflection + (prevSlope + nextSlope) * dx / 2;
+              reconstructed.push({ x: currentX, y: nextDeflection, slope: nextSlope });
+              prevSlope = nextSlope;
+              prevDeflection = nextDeflection;
+              prevCurvature = curvature;
+              previousX = currentX;
+            }
+          }
+
           if (model.support === "simply-supported") {
-            const correction = points[points.length - 1].y / L;
-            for (const point of points) {
+            const correction = reconstructed[reconstructed.length - 1].y / L;
+            for (const point of reconstructed) {
               point.y -= correction * point.x;
               point.slope -= correction;
             }
           }
-          return points;
+          for (const point of reconstructed) {
+            point.y = -point.y;
+            point.slope = -point.slope;
+          }
+          return reconstructed;
         }
 
         function deflectionForSection(section) {
@@ -757,9 +846,33 @@
           const EI = materialE * section.Ix;
           const points = deflectionAtLocations(EI);
           let maximum = { abs: 0, y: 0, x: 0 };
+          let maximumIndex = 0;
           for (const point of points) {
             if (Math.abs(point.y) > maximum.abs) {
               maximum = { abs: Math.abs(point.y), y: point.y, x: point.x };
+              maximumIndex = points.indexOf(point);
+            }
+          }
+          if (maximumIndex > 0 && maximumIndex < points.length - 1) {
+            const left = points[maximumIndex - 1];
+            const center = points[maximumIndex];
+            const right = points[maximumIndex + 1];
+            const hLeft = center.x - left.x;
+            const hRight = right.x - center.x;
+            if (hLeft > 0 && hRight > 0) {
+              const denominator = hLeft * hRight * (hLeft + hRight);
+              const a = (hLeft * (right.y - center.y) - hRight * (center.y - left.y)) / denominator;
+              const b = (hRight * hRight * (center.y - left.y) + hLeft * hLeft * (right.y - center.y)) / denominator;
+              if (Math.abs(a) > 1e-12) {
+                const offset = -b / (2 * a);
+                if (offset > -hLeft && offset < hRight) {
+                  const interpolatedX = center.x + offset;
+                  const interpolatedY = a * offset * offset + b * offset + center.y;
+                  if (Math.abs(interpolatedY) > maximum.abs) {
+                    maximum = { abs: Math.abs(interpolatedY), y: interpolatedY, x: interpolatedX };
+                  }
+                }
+              }
             }
           }
           return { points, maximum };
@@ -828,6 +941,297 @@
         return "#ef4444";
       }
 
+      const SVG_NS = "http://www.w3.org/2000/svg";
+      const plotGeometry = { left: 50, right: 750, width: 800, height: 118 };
+
+      function svgElement(tag, attributes = {}, text = "") {
+        const element = document.createElementNS(SVG_NS, tag);
+        for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, value);
+        if (text) element.textContent = text;
+        return element;
+      }
+
+      function clearSvg(svg) {
+        while (svg.firstChild) svg.removeChild(svg.firstChild);
+      }
+
+      function plotX(xIn, spanIn) {
+        return plotGeometry.left + (xIn / spanIn) * (plotGeometry.right - plotGeometry.left);
+      }
+
+      function renderBeamDrawing(model, result) {
+        const svg = document.getElementById("beam-svg");
+        clearSvg(svg);
+        svg.setAttribute("viewBox", "0 0 800 170");
+
+        const yBeam = 92;
+        const left = plotGeometry.left;
+        const right = plotGeometry.right;
+        const spanIn = model.spanIn;
+
+        svg.appendChild(svgElement("line", {
+          x1: left, y1: yBeam, x2: right, y2: yBeam,
+          stroke: "#334155", "stroke-width": 8, "stroke-linecap": "round"
+        }));
+
+        if (model.support === "cantilever") {
+          svg.appendChild(svgElement("rect", {
+            x: left - 18, y: 54, width: 18, height: 76,
+            fill: "#e2e8f0", stroke: "#64748b", "stroke-width": 2
+          }));
+          for (let y = 58; y < 126; y += 10) {
+            svg.appendChild(svgElement("line", {
+              x1: left - 18, y1: y, x2: left - 4, y2: y + 14,
+              stroke: "#94a3b8", "stroke-width": 2
+            }));
+          }
+        } else {
+          const supportLeft = [
+            `${left},${yBeam + 4}`,
+            `${left - 16},${yBeam + 30}`,
+            `${left + 16},${yBeam + 30}`
+          ].join(" ");
+          const supportRight = [
+            `${right},${yBeam + 4}`,
+            `${right - 16},${yBeam + 30}`,
+            `${right + 16},${yBeam + 30}`
+          ].join(" ");
+          svg.appendChild(svgElement("polygon", { points: supportLeft, fill: "#dbeafe", stroke: "#2563eb", "stroke-width": 2 }));
+          svg.appendChild(svgElement("circle", { cx: right, cy: yBeam + 4, r: 8, fill: "#dbeafe", stroke: "#2563eb", "stroke-width": 2 }));
+          svg.appendChild(svgElement("line", { x1: right - 18, y1: yBeam + 30, x2: right + 18, y2: yBeam + 30, stroke: "#64748b", "stroke-width": 3 }));
+        }
+
+        for (const load of model.pointLoads) {
+          const x = plotX(load.positionFt * 12, spanIn);
+          svg.appendChild(svgElement("line", {
+            x1: x, y1: 32, x2: x, y2: yBeam - 8,
+            stroke: "#2563eb", "stroke-width": 3, "marker-end": "url(#arrowhead)"
+          }));
+          svg.appendChild(svgElement("path", {
+            d: `M ${x - 7} ${yBeam - 18} L ${x} ${yBeam - 8} L ${x + 7} ${yBeam - 18} Z`,
+            fill: "#2563eb"
+          }));
+          svg.appendChild(svgElement("text", {
+            x, y: 24, "text-anchor": "middle",
+            fill: "#1d4ed8", "font-size": 12, "font-weight": 700
+          }, `${load.magnitude.toFixed(2)} k`));
+        }
+
+        for (const load of model.uniformLoads) {
+          const startX = plotX(load.startFt * 12, spanIn);
+          const endX = plotX(load.endFt * 12, spanIn);
+          const arrowCount = Math.max(3, Math.min(20, Math.ceil((endX - startX) / 28)));
+          for (let i = 0; i <= arrowCount; i++) {
+            const x = startX + (endX - startX) * i / arrowCount;
+            svg.appendChild(svgElement("line", {
+              x1: x, y1: 38, x2: x, y2: yBeam - 10,
+              stroke: "#2563eb", "stroke-width": 2
+            }));
+            svg.appendChild(svgElement("path", {
+              d: `M ${x - 5} ${yBeam - 18} L ${x} ${yBeam - 10} L ${x + 5} ${yBeam - 18} Z`,
+              fill: "#2563eb"
+            }));
+          }
+          svg.appendChild(svgElement("text", {
+            x: (startX + endX) / 2, y: 24, "text-anchor": "middle",
+            fill: "#1d4ed8", "font-size": 12, "font-weight": 700
+          }, `${load.magnitude.toFixed(2)} k/ft`));
+        }
+
+        if (model.support === "simply-supported") {
+          svg.appendChild(svgElement("line", {
+            x1: left, y1: yBeam + 34, x2: right, y2: yBeam + 34,
+            stroke: "#94a3b8", "stroke-width": 1
+          }));
+          svg.appendChild(svgElement("text", { x: left, y: yBeam + 48, "text-anchor": "middle", fill: "#64748b", "font-size": 11 }, "0 ft"));
+          svg.appendChild(svgElement("text", { x: right, y: yBeam + 48, "text-anchor": "middle", fill: "#64748b", "font-size": 11 }, `${model.spanFt.toFixed(2)} ft`));
+
+          const leftX = left;
+          const rightX = right;
+          svg.appendChild(svgElement("line", { x1: leftX, y1: 138, x2: leftX, y2: 112, stroke: "#16a34a", "stroke-width": 3, "marker-end": "url(#reaction-arrow)" }));
+          svg.appendChild(svgElement("line", { x1: rightX, y1: 138, x2: rightX, y2: 112, stroke: "#16a34a", "stroke-width": 3 }));
+          svg.appendChild(svgElement("path", { d: `M ${leftX - 6} 118 L ${leftX} 112 L ${leftX + 6} 118 Z`, fill: "#16a34a" }));
+          svg.appendChild(svgElement("path", { d: `M ${rightX - 6} 118 L ${rightX} 112 L ${rightX + 6} 118 Z`, fill: "#16a34a" }));
+          svg.appendChild(svgElement("text", { x: leftX, y: 152, "text-anchor": "middle", fill: "#166534", "font-size": 12, "font-weight": 700 }, `${result.analysis.reactions.left.toFixed(2)} k`));
+          svg.appendChild(svgElement("text", { x: rightX, y: 152, "text-anchor": "middle", fill: "#166534", "font-size": 12, "font-weight": 700 }, `${result.analysis.reactions.right.toFixed(2)} k`));
+        } else {
+          svg.appendChild(svgElement("text", { x: left, y: yBeam + 48, "text-anchor": "middle", fill: "#64748b", "font-size": 11 }, "Fixed"));
+          svg.appendChild(svgElement("text", { x: right, y: yBeam + 48, "text-anchor": "middle", fill: "#64748b", "font-size": 11 }, `${model.spanFt.toFixed(2)} ft`));
+          svg.appendChild(svgElement("line", { x1: left, y1: 138, x2: left, y2: 112, stroke: "#16a34a", "stroke-width": 3 }));
+          svg.appendChild(svgElement("path", { d: `M ${left - 6} 118 L ${left} 112 L ${left + 6} 118 Z`, fill: "#16a34a" }));
+          svg.appendChild(svgElement("text", { x: left + 8, y: 152, "text-anchor": "start", fill: "#166534", "font-size": 12, "font-weight": 700 }, `${result.analysis.reactions.left.toFixed(2)} k`));
+          svg.appendChild(svgElement("text", { x: left + 8, y: 164, "text-anchor": "start", fill: "#166534", "font-size": 11 }, `M = ${(result.analysis.reactions.moment / 12).toFixed(2)} kip-ft`));
+        }
+      }
+
+      function renderDiagram(svgId, model, result, type) {
+        const svg = document.getElementById(svgId);
+        clearSvg(svg);
+        svg.setAttribute("viewBox", "0 0 800 118");
+
+        const left = plotGeometry.left;
+        const right = plotGeometry.right;
+        const baseline = 59;
+        const spanIn = model.spanIn;
+        const stepIn = 3;
+        const points = [];
+
+        for (let x = 0; x <= spanIn + 1e-7; x += stepIn) {
+          const xIn = Math.min(x, spanIn);
+          let value;
+          if (type === "shear") value = result.analysis.shearAt(xIn);
+          if (type === "moment") value = result.analysis.momentAt(xIn) / 12;
+          if (type === "deflection") {
+            const section = sectionByName(model.material, model.sectionName);
+            const deflection = result.deflection.points.find((point) => Math.abs(point.x - xIn) < 1.1);
+            value = deflection ? deflection.y : 0;
+          }
+          points.push({ xIn, value });
+        }
+
+        if (type === "shear") {
+          for (const load of model.pointLoads) {
+            const epsilon = 0.001;
+            const xIn = load.positionFt * 12;
+            points.push({ xIn: xIn - epsilon, value: result.analysis.shearAt(xIn - epsilon) });
+            points.push({ xIn: xIn + epsilon, value: result.analysis.shearAt(xIn + epsilon) });
+          }
+          for (const load of model.uniformLoads) {
+            points.push({ xIn: load.startFt * 12, value: result.analysis.shearAt(load.startFt * 12) });
+            points.push({ xIn: load.endFt * 12, value: result.analysis.shearAt(load.endFt * 12) });
+          }
+        } else if (type === "moment") {
+          for (const load of model.pointLoads) {
+            points.push({ xIn: load.positionFt * 12, value: result.analysis.momentAt(load.positionFt * 12) / 12 });
+          }
+          for (const load of model.uniformLoads) {
+            points.push({ xIn: load.startFt * 12, value: result.analysis.momentAt(load.startFt * 12) / 12 });
+            points.push({ xIn: load.endFt * 12, value: result.analysis.momentAt(load.endFt * 12) / 12 });
+          }
+        }
+        points.sort((a, b) => a.xIn - b.xIn);
+        points.forEach((point) => { point.x = plotX(point.xIn, spanIn); });
+
+        let maxAbs = 0;
+        for (const point of points) maxAbs = Math.max(maxAbs, Math.abs(point.value));
+        maxAbs = maxAbs || 1;
+        const scale = 38 / maxAbs;
+
+        svg.appendChild(svgElement("line", { x1: left, y1: baseline, x2: right, y2: baseline, stroke: "#94a3b8", "stroke-width": 1 }));
+        svg.appendChild(svgElement("line", { x1: left, y1: 16, x2: left, y2: 102, stroke: "#e2e8f0", "stroke-width": 1 }));
+        svg.appendChild(svgElement("line", { x1: right, y1: 16, x2: right, y2: 102, stroke: "#e2e8f0", "stroke-width": 1 }));
+
+        const polygonPoints = [
+          `${left},${baseline}`,
+          ...points.map((point) => `${point.x.toFixed(2)},${(baseline - point.value * scale).toFixed(2)}`),
+          `${right},${baseline}`
+        ].join(" ");
+        svg.appendChild(svgElement("polygon", {
+          points: polygonPoints,
+          fill: type === "deflection" ? "rgba(37,99,235,0.14)" : "rgba(37,99,235,0.18)",
+          stroke: "none"
+        }));
+
+        if (points.length > 1) {
+          const pathData = points.map((point, index) =>
+            `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${(baseline - point.value * scale).toFixed(2)}`
+          ).join(" ");
+          svg.appendChild(svgElement("path", {
+            d: pathData, fill: "none", stroke: "#2563eb", "stroke-width": 2,
+            "stroke-linejoin": "round"
+          }));
+        }
+
+        let extreme;
+        if (type === "shear") extreme = result.shearExtreme;
+        if (type === "moment") extreme = { value: result.momentExtreme.value / 12, absValue: Math.abs(result.momentExtreme.value / 12), x: result.momentExtreme.x };
+        if (type === "deflection") extreme = { value: result.deflection.maximum.y, absValue: result.deflection.maximum.abs, x: result.deflection.maximum.x };
+        if (extreme) {
+          const extremeX = plotX(extreme.x, spanIn);
+          const extremeValue = type === "deflection" ? extreme.value : extreme.value;
+          const y = baseline - extremeValue * scale;
+          const labelUnit = type === "shear" ? "k" : type === "moment" ? "kip-ft" : "in";
+          svg.appendChild(svgElement("circle", { cx: extremeX, cy: y, r: 4, fill: "#ffffff", stroke: "#2563eb", "stroke-width": 2 }));
+          const label = `${Math.abs(extreme.absValue).toFixed(type === "deflection" ? 3 : 2)} ${labelUnit} @ ${(extreme.x / 12).toFixed(2)} ft`;
+          svg.appendChild(svgElement("text", {
+            x: Math.min(right - 2, Math.max(left + 2, extremeX)),
+            y: Math.max(14, y - 8),
+            "text-anchor": extremeX > right - 100 ? "end" : "start",
+            fill: "#1d4ed8", "font-size": 11, "font-weight": 700
+          }, label));
+        }
+
+        svg.appendChild(svgElement("text", { x: left, y: 112, "text-anchor": "middle", fill: "#64748b", "font-size": 10 }, "0 ft"));
+        svg.appendChild(svgElement("text", { x: right, y: 112, "text-anchor": "middle", fill: "#64748b", "font-size": 10 }, `${model.spanFt.toFixed(2)} ft`));
+        svg.dataset.type = type;
+      }
+
+      function showHoverLine(event) {
+        const model = collectModel();
+        const section = sectionByName(model.material, model.sectionName);
+        if (!section) return;
+        const result = evaluateSection(model, section);
+        const svg = event.currentTarget;
+        const rect = svg.getBoundingClientRect();
+        const viewX = ((event.clientX - rect.left) / rect.width) * 800;
+        const selectedX = Math.min(plotGeometry.right, Math.max(plotGeometry.left, viewX));
+        const fraction = (selectedX - plotGeometry.left) / (plotGeometry.right - plotGeometry.left);
+        const xIn = fraction * model.spanIn;
+        const xFt = xIn / 12;
+        const pixelX = plotX(xIn, model.spanIn);
+
+        document.querySelectorAll(".plot-svg").forEach((plot) => {
+          if (!plot.querySelector(".hover-line")) {
+            plot.appendChild(svgElement("line", {
+              class: "hover-line",
+              y1: plot.id === "beam-svg" ? 16 : 16,
+              y2: plot.id === "beam-svg" ? 154 : 102,
+              stroke: "#64748b",
+              "stroke-width": 1,
+              "stroke-dasharray": "4 3",
+              opacity: 0,
+              "pointer-events": "none"
+            }));
+          }
+          const line = plot.querySelector(".hover-line");
+          line.setAttribute("x1", pixelX);
+          line.setAttribute("x2", pixelX);
+          line.setAttribute("opacity", "1");
+        });
+
+        const deflection = result.deflection.points.reduce((nearest, point) =>
+          Math.abs(point.x - xIn) < Math.abs(nearest.x - xIn) ? point : nearest,
+        result.deflection.points[0]);
+        const readout = document.getElementById("hover-readout");
+        readout.innerHTML =
+          `<strong>x = ${xFt.toFixed(2)} ft</strong>` +
+          `V = ${result.analysis.shearAt(xIn).toFixed(2)} k<br>` +
+          `M = ${(result.analysis.momentAt(xIn) / 12).toFixed(2)} kip-ft<br>` +
+          `y = ${deflection.y.toFixed(3)} in`;
+        readout.style.opacity = "1";
+
+        const stackRect = document.querySelector(".analysis-stack").getBoundingClientRect();
+        let left = event.clientX - stackRect.left + 12;
+        let top = event.clientY - stackRect.top + 12;
+        left = Math.min(stackRect.width - 205, Math.max(8, left));
+        top = Math.min(stackRect.height - 90, Math.max(8, top));
+        readout.style.left = `${left}px`;
+        readout.style.top = `${top}px`;
+      }
+
+      function hideHoverLine() {
+        document.querySelectorAll(".hover-line").forEach((line) => line.setAttribute("opacity", "0"));
+        const readout = document.getElementById("hover-readout");
+        readout.style.opacity = "0";
+      }
+
+      function bindHoverLines() {
+        document.querySelectorAll(".plot-svg").forEach((svg) => {
+          svg.onmousemove = showHoverLine;
+          svg.onmouseleave = hideHoverLine;
+        });
+      }
+
       function updateCalculations() {
         const model = collectModel();
         const section = sectionByName(model.material, model.sectionName);
@@ -875,10 +1279,11 @@
           updateCalculations();
         };
 
-        const beamPlaceholder = document.getElementById("beam-placeholder");
-        beamPlaceholder.innerHTML = model.support === "cantilever"
-          ? `Fixed-end reaction: ${result.analysis.reactions.left.toFixed(2)} k upward; fixed-end moment: ${(result.analysis.reactions.moment / 12).toFixed(2)} kip-ft`
-          : `Reactions: ${result.analysis.reactions.left.toFixed(2)} k left; ${result.analysis.reactions.right.toFixed(2)} k right`;
+        renderBeamDrawing(model, result);
+        renderDiagram("shear-svg", model, result, "shear");
+        renderDiagram("moment-svg", model, result, "moment");
+        renderDiagram("deflection-svg", model, result, "deflection");
+        bindHoverLines();
       }
 
       function updateSections() {
@@ -940,9 +1345,13 @@
         const magnitudeInput = card.querySelector(".point-magnitude");
         const positionInput = card.querySelector(".point-position");
         positiveInput(magnitudeInput);
+        magnitudeInput.addEventListener("input", updateCalculations);
+        magnitudeInput.addEventListener("change", updateCalculations);
         positionInput.addEventListener("input", () => {
           positionInput.value = clamp(Number(positionInput.value) || 0, 0, Number(spanNumber.value));
+          updateCalculations();
         });
+        positionInput.addEventListener("change", updateCalculations);
         card.querySelector(".icon-button").addEventListener("click", (event) => removeLoad(event.currentTarget));
         updateLoadCount();
         updateCalculations();
@@ -975,6 +1384,8 @@
         const startInput = card.querySelector(".uniform-start");
         const endInput = card.querySelector(".uniform-end");
         positiveInput(magnitudeInput);
+        magnitudeInput.addEventListener("input", updateCalculations);
+        magnitudeInput.addEventListener("change", updateCalculations);
 
         function normalizeEndpoints() {
           let start = clamp(Number(startInput.value) || 0, 0, Number(spanNumber.value));
@@ -982,8 +1393,11 @@
           if (start > end) [start, end] = [end, start];
           startInput.value = start;
           endInput.value = end;
+          updateCalculations();
         }
 
+        startInput.addEventListener("input", updateCalculations);
+        endInput.addEventListener("input", updateCalculations);
         startInput.addEventListener("change", normalizeEndpoints);
         endInput.addEventListener("change", normalizeEndpoints);
         card.querySelector(".icon-button").addEventListener("click", (event) => removeLoad(event.currentTarget));
