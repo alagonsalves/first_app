@@ -52,9 +52,18 @@ sizing a floor beam or deck joist.
   | 2x12    | 177.98    | 31.64     |
 
 - Deflection limit: L/240 or L/360 (default L/360).
-- Self-weight is ignored.
+- Steel beam self-weight is optional and off by default. When enabled,
+  include the selected steel section's tabulated weight as a downward
+  uniform load across the full span.
+- Lumber has no self-weight option. Switching to lumber turns the
+  self-weight toggle off.
 - The material control is a dropdown; the section control shows only the
   sections available for the selected material.
+- Below the section dropdown, show a checkbox labeled "Include selected
+  steel beam self-weight" and a derived weight label when steel is selected.
+  The label uses kips/ft, for example "W12x26: 0.026 kips/ft".
+- The toggle is disabled and hidden, or clearly unavailable, while lumber
+  is selected.
 
 ## Calculations
 - Reactions from statics. Upward reactions are positive. The cantilever is
@@ -77,10 +86,21 @@ sizing a floor beam or deck joist.
 - Bending stress fb = |M max| x 12 / Sx (ksi). Bending check passes if
   fb <= Fb.
 - Deflection check passes if |y max| <= L/240 or L/360 (L in inches).
+- When steel self-weight is enabled, add the selected section weight to
+  the general load model as one uniform load over 0 to L. Convert lb/ft to
+  kips/ft by dividing by 1000. Do not add self-weight to the editable
+  uniform-load list or replace general reaction, shear, moment, or
+  deflection calculations with full-span uniform-load formulas.
+- The beam drawing and uniform-load display include the synthetic steel
+  self-weight load only when enabled.
 - Lightest passing section: of the sections in the chosen material, the
   lightest steel section that passes both checks (if two weigh the same,
   the one with the larger Ix), or the first lumber size in the table
   that passes.
+  With steel self-weight enabled, evaluate every steel candidate using that
+  candidate's own weight, Ix, and Sx. The candidate's weight and section
+  properties must be applied together. Use the lightest candidate that
+  passes both checks, with the same weight tie rule.
   The "Use lightest passing" button changes only the section selection,
   never the selected material. If no section passes, display a clear message.
 - Units: kips, ft, and kip-ft on screen; inches for deflection.
@@ -141,8 +161,28 @@ sizing a floor beam or deck joist.
    end (PL^3/3EI); L/360 = 0.333 in, so deflection fails.
 4. Simply supported 12 ft 2x10 joist, uniform 0.05 kip/ft: max moment
    0.90 kip-ft; fb = 0.505 ksi; max deflection 0.147 in; both pass.
+5. Simply supported, 20 ft, W12x26, no external load, self-weight on:
+   0.026 kips/ft self-weight; reactions 0.26 k each; max moment 1.30 kip-ft
+   at 10 ft; fb = 0.467 ksi; max deflection 0.016 in.
+6. Simply supported, 20 ft, W12x26, 1 kip/ft external uniform load over
+   the full span, self-weight on: combined load 1.026 kips/ft; reactions
+   10.26 k each; max moment 51.30 kip-ft at 10 ft; deflection and stress
+   are recalculated from the combined loading: fb = 18.43 ksi and
+   max deflection 0.624 in.
+7. Cantilever, 10 ft, W12x26, no external load, self-weight on:
+   0.026 kips/ft self-weight; reaction 0.26 k; fixed-end moment 1.30 kip-ft;
+   deflection uses the general cantilever uniform-load integration and is
+   0.009 in at the free end.
+8. Section-change with self-weight on: 20 ft simply supported, no external
+   load; W12x26 uses 0.026 kips/ft and W10x12 uses 0.012 kips/ft. Candidate
+   checks and Ix/Sx properties must change with each section. W12x26 gives
+   1.30 kip-ft moment, 0.467 ksi stress, and 0.016 in deflection; W10x12
+   gives 0.60 kip-ft moment, 0.661 ksi stress, and 0.028 in deflection.
+9. Steel-to-lumber switch: lumber selection turns self-weight off and excludes
+   all steel self-weight. 12 ft simply supported 2x10 with 0.05 kip/ft
+   external uniform load retains the original no-self-weight result.
 
 ## Out of scope
-- Self-weight, shear stress, lateral-torsional buckling, load
+- Lumber self-weight, shear stress, lateral-torsional buckling, load
   combinations, and continuous beams.
 - Saving designs.

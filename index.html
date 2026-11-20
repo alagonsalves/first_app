@@ -94,6 +94,33 @@
       .field { margin-bottom: 12px; }
       .field:last-child { margin-bottom: 0; }
 
+      .toggle-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 9px;
+      }
+
+      .toggle-row input[type="checkbox"] {
+        width: 16px;
+        height: 16px;
+        margin: 2px 0 0;
+        accent-color: var(--accent);
+        flex: 0 0 auto;
+      }
+
+      .toggle-row label {
+        margin: 0;
+        line-height: 1.35;
+        cursor: pointer;
+      }
+
+      .self-weight-detail {
+        min-height: 16px;
+        margin: 6px 0 0 25px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
       label {
         display: block;
         margin-bottom: 6px;
@@ -511,6 +538,13 @@
             <label for="section">Section</label>
             <select id="section"></select>
           </div>
+          <div class="field" id="self-weight-control">
+            <div class="toggle-row">
+              <input id="include-self-weight" type="checkbox" aria-describedby="self-weight-detail">
+              <label for="include-self-weight">Include selected steel beam self-weight</label>
+            </div>
+            <div class="self-weight-detail" id="self-weight-detail"></div>
+          </div>
         </section>
 
         <section class="panel-section">
@@ -604,6 +638,9 @@
       const spanNumber = document.getElementById("span-number");
       const materialSelect = document.getElementById("material");
       const sectionSelect = document.getElementById("section");
+      const includeSelfWeight = document.getElementById("include-self-weight");
+      const selfWeightControl = document.getElementById("self-weight-control");
+      const selfWeightDetail = document.getElementById("self-weight-detail");
       const pointList = document.getElementById("point-load-list");
       const uniformList = document.getElementById("uniform-load-list");
       const loadCount = document.getElementById("load-count");
@@ -657,7 +694,8 @@
           uniformLoads,
           deflectionLimit: Number(document.getElementById("deflection-limit").value),
           material: materialSelect.value,
-          sectionName: sectionSelect.value
+          sectionName: sectionSelect.value,
+          includeSelfWeight: materialSelect.value === "steel" && includeSelfWeight.checked
         };
       }
 
@@ -667,11 +705,21 @@
           P: load.magnitude,
           a: load.positionFt * 12
         }));
-        const uniformLoads = model.uniformLoads.map((load) => ({
+        let uniformLoads = model.uniformLoads.map((load) => ({
           w: load.magnitude / 12,
           start: load.startFt * 12,
           end: load.endFt * 12
         }));
+        if (model.includeSelfWeight && model.material === "steel") {
+          const selectedSection = sectionTables.steel.find((section) => section.name === model.sectionName);
+          if (selectedSection) {
+            uniformLoads.push({
+              w: selectedSection.weight / 1000 / 12,
+              start: 0,
+              end: L
+            });
+          }
+        }
         const totalPoint = pointLoads.reduce((sum, load) => sum + load.P, 0);
         const totalUniform = uniformLoads.reduce((sum, load) => sum + load.w * (load.end - load.start), 0);
         let reactions;
@@ -917,7 +965,12 @@
       }
 
       function evaluateSection(model, section) {
-        const analysis = calculateBeam(model);
+        const candidateModel = {
+          ...model,
+          sectionName: section.name,
+          includeSelfWeight: model.includeSelfWeight && model.material === "steel"
+        };
+        const analysis = calculateBeam(candidateModel);
         const shearExtreme = analysis.extremaFor("shear");
         const momentExtreme = analysis.extremaFor("moment");
         const maxMomentKipIn = Math.abs(momentExtreme.absValue);
@@ -1069,6 +1122,31 @@
             x: (startX + endX) / 2, y: 24, "text-anchor": "middle",
             fill: "#1d4ed8", "font-size": 12, "font-weight": 700
           }, `${load.magnitude.toFixed(2)} k/ft`));
+        }
+
+        if (model.includeSelfWeight && model.material === "steel") {
+          const section = sectionByName("steel", model.sectionName);
+          if (section) {
+            const startX = left;
+            const endX = right;
+            const kipsPerFt = section.weight / 1000;
+            const arrowCount = 20;
+            for (let i = 0; i <= arrowCount; i++) {
+              const x = startX + (endX - startX) * i / arrowCount;
+              svg.appendChild(svgElement("line", {
+                x1: x, y1: 58, x2: x, y2: yBeam - 10,
+                stroke: "#64748b", "stroke-width": 1.5
+              }));
+              svg.appendChild(svgElement("path", {
+                d: `M ${x - 4} ${yBeam - 18} L ${x} ${yBeam - 10} L ${x + 4} ${yBeam - 18} Z`,
+                fill: "#64748b"
+              }));
+            }
+            svg.appendChild(svgElement("text", {
+              x: (startX + endX) / 2, y: 50, "text-anchor": "middle",
+              fill: "#475569", "font-size": 11, "font-weight": 700
+            }, `Self-weight ${kipsPerFt.toFixed(3)} k/ft`));
+          }
         }
 
         if (model.support === "simply-supported") {
@@ -1370,9 +1448,32 @@
           sectionSelect.appendChild(option);
         });
         sectionSelect.value = materialSelect.value === "steel" ? "W12x26" : "2x8";
+        if (materialSelect.value === "lumber") includeSelfWeight.checked = false;
+        includeSelfWeight.disabled = materialSelect.value !== "steel";
+        selfWeightControl.style.opacity = materialSelect.value === "steel" ? "1" : "0.55";
+        updateSelfWeightDetail();
+      }
+
+      function updateSelfWeightDetail() {
+        if (materialSelect.value !== "steel") {
+          selfWeightDetail.textContent = "Unavailable for lumber.";
+          return;
+        }
+        const section = sectionByName("steel", sectionSelect.value);
+        if (!section) {
+          selfWeightDetail.textContent = "";
+          return;
+        }
+        const kipsPerFt = section.weight / 1000;
+        selfWeightDetail.textContent = `${section.name}: ${kipsPerFt.toFixed(3)} kips/ft`;
       }
 
       materialSelect.addEventListener("change", updateSections);
+      sectionSelect.addEventListener("change", () => {
+        updateSelfWeightDetail();
+        updateCalculations();
+      });
+      includeSelfWeight.addEventListener("change", updateCalculations);
       updateSections();
 
       function positiveInput(input, fallback = 0) {
@@ -1520,22 +1621,47 @@
         const cases = [
           {
             name: "Simply supported uniform",
-            model: { support: "simply-supported", spanFt: 20, spanIn: 240, pointLoads: [], uniformLoads: [{ magnitude: 1, startFt: 0, endFt: 20 }], deflectionLimit: 360, material: "steel", sectionName: "W12x26" },
+            model: { support: "simply-supported", spanFt: 20, spanIn: 240, pointLoads: [], uniformLoads: [{ magnitude: 1, startFt: 0, endFt: 20 }], deflectionLimit: 360, material: "steel", sectionName: "W12x26", includeSelfWeight: false },
             section: sectionTables.steel.find((section) => section.name === "W12x26")
           },
           {
             name: "Simply supported off-center point",
-            model: { support: "simply-supported", spanFt: 20, spanIn: 240, pointLoads: [{ magnitude: 10, positionFt: 5 }], uniformLoads: [], deflectionLimit: 360, material: "steel", sectionName: "W12x26" },
+            model: { support: "simply-supported", spanFt: 20, spanIn: 240, pointLoads: [{ magnitude: 10, positionFt: 5 }], uniformLoads: [], deflectionLimit: 360, material: "steel", sectionName: "W12x26", includeSelfWeight: false },
             section: sectionTables.steel.find((section) => section.name === "W12x26")
           },
           {
             name: "Cantilever point",
-            model: { support: "cantilever", spanFt: 10, spanIn: 120, pointLoads: [{ magnitude: 5, positionFt: 10 }], uniformLoads: [], deflectionLimit: 360, material: "steel", sectionName: "W12x26" },
+            model: { support: "cantilever", spanFt: 10, spanIn: 120, pointLoads: [{ magnitude: 5, positionFt: 10 }], uniformLoads: [], deflectionLimit: 360, material: "steel", sectionName: "W12x26", includeSelfWeight: false },
             section: sectionTables.steel.find((section) => section.name === "W12x26")
           },
           {
             name: "Lumber uniform",
-            model: { support: "simply-supported", spanFt: 12, spanIn: 144, pointLoads: [], uniformLoads: [{ magnitude: 0.05, startFt: 0, endFt: 12 }], deflectionLimit: 360, material: "lumber", sectionName: "2x10" },
+            model: { support: "simply-supported", spanFt: 12, spanIn: 144, pointLoads: [], uniformLoads: [{ magnitude: 0.05, startFt: 0, endFt: 12 }], deflectionLimit: 360, material: "lumber", sectionName: "2x10", includeSelfWeight: false },
+            section: sectionTables.lumber.find((section) => section.name === "2x10")
+          },
+          {
+            name: "Simply supported W12x26 self-weight only",
+            model: { support: "simply-supported", spanFt: 20, spanIn: 240, pointLoads: [], uniformLoads: [], deflectionLimit: 360, material: "steel", sectionName: "W12x26", includeSelfWeight: true },
+            section: sectionTables.steel.find((section) => section.name === "W12x26")
+          },
+          {
+            name: "Simply supported W12x26 external plus self-weight",
+            model: { support: "simply-supported", spanFt: 20, spanIn: 240, pointLoads: [], uniformLoads: [{ magnitude: 1, startFt: 0, endFt: 20 }], deflectionLimit: 360, material: "steel", sectionName: "W12x26", includeSelfWeight: true },
+            section: sectionTables.steel.find((section) => section.name === "W12x26")
+          },
+          {
+            name: "Cantilever W12x26 self-weight only",
+            model: { support: "cantilever", spanFt: 10, spanIn: 120, pointLoads: [], uniformLoads: [], deflectionLimit: 360, material: "steel", sectionName: "W12x26", includeSelfWeight: true },
+            section: sectionTables.steel.find((section) => section.name === "W12x26")
+          },
+          {
+            name: "Section change W12x26/W10x12 self-weight",
+            model: { support: "simply-supported", spanFt: 20, spanIn: 240, pointLoads: [], uniformLoads: [], deflectionLimit: 360, material: "steel", sectionName: "W12x26", includeSelfWeight: true },
+            section: sectionTables.steel.find((section) => section.name === "W12x26")
+          },
+          {
+            name: "Steel-to-lumber self-weight off",
+            model: { support: "simply-supported", spanFt: 12, spanIn: 144, pointLoads: [], uniformLoads: [{ magnitude: 0.05, startFt: 0, endFt: 12 }], deflectionLimit: 360, material: "lumber", sectionName: "2x10", includeSelfWeight: false },
             section: sectionTables.lumber.find((section) => section.name === "2x10")
           }
         ];
@@ -1553,7 +1679,26 @@
             deflectionLocationFt: result.deflection.maximum.x / 12,
             allowableDeflection: result.allowableDeflection,
             bendingPass: result.bendingPass,
-            deflectionPass: result.deflectionPass
+            deflectionPass: result.deflectionPass,
+            includeSelfWeight: test.model.includeSelfWeight,
+            sectionWeightKipsFt: test.model.material === "steel"
+              ? test.section.weight / 1000
+              : null,
+            candidateComparison: test.name === "Section change W12x26/W10x12 self-weight"
+              ? ["W12x26", "W10x12"].map((name) => {
+                  const candidate = sectionTables.steel.find((section) => section.name === name);
+                  const candidateResult = evaluateSection(test.model, candidate);
+                  return {
+                    name,
+                    weightKipsFt: candidate.weight / 1000,
+                    momentKipFt: candidateResult.maxMomentKipFt,
+                    bendingStress: candidateResult.bendingStress,
+                    deflection: candidateResult.deflection.maximum.abs,
+                    bendingPass: candidateResult.bendingPass,
+                    deflectionPass: candidateResult.deflectionPass
+                  };
+                })
+              : null
           };
         });
       }
